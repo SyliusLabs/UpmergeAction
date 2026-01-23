@@ -35,14 +35,7 @@ runs:
           run: |
               git fetch origin ${{ inputs.base_branch }} ${{ inputs.target_branch }}
 
-              # Check if there are actual content differences (three-dot diff shows changes in base since common ancestor)
-              if git diff --quiet origin/${{ inputs.target_branch }}...origin/${{ inputs.base_branch }} 2>/dev/null; then
-                echo "::notice::No changes to upmerge - ${{ inputs.target_branch }} already contains all changes from ${{ inputs.base_branch }}"
-                echo "created=false" >> $GITHUB_OUTPUT
-                exit 0
-              fi
-
-              echo "::notice::Changes detected - creating upmerge PR from ${{ inputs.base_branch }} to ${{ inputs.target_branch }}"
+              echo "::notice::Attempting upmerge from ${{ inputs.base_branch }} to ${{ inputs.target_branch }}"
 
               BRANCH_NAME="upmerge/${{ inputs.base_branch }}_${{ inputs.target_branch }}"
 
@@ -65,7 +58,7 @@ runs:
               fi
 
               # Create the PR
-              PR_URL=$(gh pr create \
+              PR_OUTPUT=$(gh pr create \
                 --base "${{ inputs.target_branch }}" \
                 --head "$BRANCH_NAME" \
                 --title "[UPMERGE] ${{ inputs.base_branch }} -> ${{ inputs.target_branch }}" \
@@ -79,12 +72,27 @@ runs:
               gh pr checkout <this-pr-number>
               git merge origin/${{ inputs.target_branch }} -m \"Resolve conflicts between ${{ inputs.base_branch }} and ${{ inputs.target_branch }}\"
               git push
-              \`\`\`")
+              \`\`\`" 2>&1) || true
 
-              echo "created=true" >> $GITHUB_OUTPUT
-              echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
-              echo "pr_number=$(echo $PR_URL | grep -oE '[0-9]+$')" >> $GITHUB_OUTPUT
-              echo "::notice::Created PR: $PR_URL"
+              # Check if PR creation failed due to "no commits between"
+              if echo "$PR_OUTPUT" | grep -q "No commits between"; then
+                echo "::notice::No commits to upmerge - ${{ inputs.target_branch }} already contains all changes from ${{ inputs.base_branch }}"
+                # Clean up the branch we pushed
+                git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
+                echo "created=false" >> $GITHUB_OUTPUT
+                exit 0
+              fi
+
+              # Check if output looks like a URL (success)
+              if echo "$PR_OUTPUT" | grep -q "^https://"; then
+                echo "created=true" >> $GITHUB_OUTPUT
+                echo "pr_url=$PR_OUTPUT" >> $GITHUB_OUTPUT
+                echo "pr_number=$(echo $PR_OUTPUT | grep -oE '[0-9]+$')" >> $GITHUB_OUTPUT
+                echo "::notice::Created PR: $PR_OUTPUT"
+              else
+                echo "::error::Failed to create PR: $PR_OUTPUT"
+                exit 1
+              fi
 
 branding:
     icon: git-merge
