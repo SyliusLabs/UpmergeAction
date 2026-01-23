@@ -1,0 +1,85 @@
+name: "Upmerge PR"
+description: "Creates an upmerge PR from base branch to target branch if there are commits to merge"
+
+inputs:
+    base_branch:
+        required: true
+        description: "Source branch to upmerge from (e.g., 1.0)"
+    target_branch:
+        required: true
+        description: "Target branch to upmerge to (e.g., 1.1)"
+    token:
+        required: true
+        description: "GitHub token with permissions to create PRs"
+
+outputs:
+    created:
+        description: "Whether a PR was created ('true' or 'false')"
+        value: ${{ steps.result.outputs.created }}
+    pr_number:
+        description: "PR number if created, empty otherwise"
+        value: ${{ steps.create-pr.outputs.pull-request-number }}
+    pr_url:
+        description: "PR URL if created, empty otherwise"
+        value: ${{ steps.create-pr.outputs.pull-request-url }}
+
+runs:
+    using: "composite"
+
+    steps:
+        - name: Check if upmerge needed
+          id: check
+          shell: bash
+          run: |
+              git fetch origin ${{ inputs.base_branch }} ${{ inputs.target_branch }}
+              COMMITS=$(git rev-list --count origin/${{ inputs.target_branch }}..origin/${{ inputs.base_branch }})
+              echo "commits=$COMMITS" >> $GITHUB_OUTPUT
+              if [ "$COMMITS" -eq "0" ]; then
+                echo "::notice::No commits to upmerge - ${{ inputs.target_branch }} is up to date with ${{ inputs.base_branch }}"
+              else
+                echo "::notice::$COMMITS commit(s) to upmerge from ${{ inputs.base_branch }} to ${{ inputs.target_branch }}"
+              fi
+
+        - name: Reset to base branch
+          if: steps.check.outputs.commits != '0'
+          shell: bash
+          run: git reset --hard origin/${{ inputs.base_branch }}
+
+        - name: Create Pull Request
+          id: create-pr
+          if: steps.check.outputs.commits != '0'
+          uses: peter-evans/create-pull-request@v7
+          with:
+              token: ${{ inputs.token }}
+              title: "[UPMERGE] ${{ inputs.base_branch }} -> ${{ inputs.target_branch }}"
+              branch: "upmerge/${{ inputs.base_branch }}_${{ inputs.target_branch }}"
+              base: ${{ inputs.target_branch }}
+              delete-branch: true
+              body: |
+                  This PR has been generated automatically.
+
+                  **Remember!** The upmerge should always be merged using the `Merge pull request` button.
+
+                  In case of conflicts, resolve them manually:
+                  ```bash
+                  git fetch origin
+                  gh pr checkout <this-pr-number>
+                  git merge origin/${{ inputs.target_branch }} -m "Resolve conflicts between ${{ inputs.base_branch }} and ${{ inputs.target_branch }}"
+                  git push
+                  ```
+
+        - name: Set result output
+          id: result
+          shell: bash
+          run: |
+              if [ "${{ steps.check.outputs.commits }}" = "0" ]; then
+                echo "created=false" >> $GITHUB_OUTPUT
+              elif [ -n "${{ steps.create-pr.outputs.pull-request-number }}" ]; then
+                echo "created=true" >> $GITHUB_OUTPUT
+              else
+                echo "created=false" >> $GITHUB_OUTPUT
+              fi
+
+branding:
+    icon: git-merge
+    color: purple
