@@ -1,5 +1,5 @@
 name: "Upmerge PR"
-description: "Creates an upmerge PR from base branch to target branch if there are commits to merge"
+description: "Creates an upmerge PR from base branch to target branch if there are changes to merge"
 
 inputs:
     base_branch:
@@ -15,72 +15,76 @@ inputs:
 outputs:
     created:
         description: "Whether a PR was created ('true' or 'false')"
-        value: ${{ steps.result.outputs.created }}
+        value: ${{ steps.create-pr.outputs.created }}
     pr_number:
         description: "PR number if created, empty otherwise"
-        value: ${{ steps.create-pr.outputs.pull-request-number }}
+        value: ${{ steps.create-pr.outputs.pr_number }}
     pr_url:
         description: "PR URL if created, empty otherwise"
-        value: ${{ steps.create-pr.outputs.pull-request-url }}
+        value: ${{ steps.create-pr.outputs.pr_url }}
 
 runs:
     using: "composite"
 
     steps:
-        - name: Check if upmerge needed
-          id: check
+        - name: Check if upmerge needed and create PR
+          id: create-pr
           shell: bash
+          env:
+              GH_TOKEN: ${{ inputs.token }}
           run: |
               git fetch origin ${{ inputs.base_branch }} ${{ inputs.target_branch }}
 
-              # Compare actual content (tree), not commit history
-              if git diff --quiet origin/${{ inputs.target_branch }}...origin/${{ inputs.base_branch }}; then
-                echo "has_changes=false" >> $GITHUB_OUTPUT
+              # Check if there are actual content differences (three-dot diff shows changes in base since common ancestor)
+              if git diff --quiet origin/${{ inputs.target_branch }}...origin/${{ inputs.base_branch }} 2>/dev/null; then
                 echo "::notice::No changes to upmerge - ${{ inputs.target_branch }} already contains all changes from ${{ inputs.base_branch }}"
-              else
-                echo "has_changes=true" >> $GITHUB_OUTPUT
-                echo "::notice::Changes detected - upmerge needed from ${{ inputs.base_branch }} to ${{ inputs.target_branch }}"
+                echo "created=false" >> $GITHUB_OUTPUT
+                exit 0
               fi
 
-        - name: Reset to base branch
-          if: steps.check.outputs.has_changes == 'true'
-          shell: bash
-          run: git reset --hard origin/${{ inputs.base_branch }}
+              echo "::notice::Changes detected - creating upmerge PR from ${{ inputs.base_branch }} to ${{ inputs.target_branch }}"
 
-        - name: Create Pull Request
-          id: create-pr
-          if: steps.check.outputs.has_changes == 'true'
-          uses: peter-evans/create-pull-request@v7
-          with:
-              token: ${{ inputs.token }}
-              title: "[UPMERGE] ${{ inputs.base_branch }} -> ${{ inputs.target_branch }}"
-              branch: "upmerge/${{ inputs.base_branch }}_${{ inputs.target_branch }}"
-              base: ${{ inputs.target_branch }}
-              delete-branch: true
-              body: |
-                  This PR has been generated automatically.
+              BRANCH_NAME="upmerge/${{ inputs.base_branch }}_${{ inputs.target_branch }}"
 
-                  **Remember!** The upmerge should always be merged using the `Merge pull request` button.
+              # Delete existing upmerge branch if it exists
+              git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
 
-                  In case of conflicts, resolve them manually:
-                  ```bash
-                  git fetch origin
-                  gh pr checkout <this-pr-number>
-                  git merge origin/${{ inputs.target_branch }} -m "Resolve conflicts between ${{ inputs.base_branch }} and ${{ inputs.target_branch }}"
-                  git push
-                  ```
+              # Create and push the upmerge branch from base
+              git checkout -B "$BRANCH_NAME" origin/${{ inputs.base_branch }}
+              git push -u origin "$BRANCH_NAME"
 
-        - name: Set result output
-          id: result
-          shell: bash
-          run: |
-              if [ "${{ steps.check.outputs.has_changes }}" = "false" ]; then
+              # Check if PR already exists
+              EXISTING_PR=$(gh pr list --base ${{ inputs.target_branch }} --head "$BRANCH_NAME" --json number --jq '.[0].number // empty')
+
+              if [ -n "$EXISTING_PR" ]; then
+                echo "::notice::PR #$EXISTING_PR already exists"
                 echo "created=false" >> $GITHUB_OUTPUT
-              elif [ -n "${{ steps.create-pr.outputs.pull-request-number }}" ]; then
-                echo "created=true" >> $GITHUB_OUTPUT
-              else
-                echo "created=false" >> $GITHUB_OUTPUT
+                echo "pr_number=$EXISTING_PR" >> $GITHUB_OUTPUT
+                echo "pr_url=$(gh pr view $EXISTING_PR --json url --jq '.url')" >> $GITHUB_OUTPUT
+                exit 0
               fi
+
+              # Create the PR
+              PR_URL=$(gh pr create \
+                --base "${{ inputs.target_branch }}" \
+                --head "$BRANCH_NAME" \
+                --title "[UPMERGE] ${{ inputs.base_branch }} -> ${{ inputs.target_branch }}" \
+                --body "This PR has been generated automatically.
+
+              **Remember!** The upmerge should always be merged using the \`Merge pull request\` button.
+
+              In case of conflicts, resolve them manually:
+              \`\`\`bash
+              git fetch origin
+              gh pr checkout <this-pr-number>
+              git merge origin/${{ inputs.target_branch }} -m \"Resolve conflicts between ${{ inputs.base_branch }} and ${{ inputs.target_branch }}\"
+              git push
+              \`\`\`")
+
+              echo "created=true" >> $GITHUB_OUTPUT
+              echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+              echo "pr_number=$(echo $PR_URL | grep -oE '[0-9]+$')" >> $GITHUB_OUTPUT
+              echo "::notice::Created PR: $PR_URL"
 
 branding:
     icon: git-merge

@@ -1,6 +1,6 @@
 # Upmerge Action
 
-A GitHub Action that creates upmerge PRs between branches when there are commits to merge.
+A GitHub Action that creates upmerge PRs between branches when there are changes to merge.
 
 ## Usage
 
@@ -58,6 +58,8 @@ jobs:
 
 ## Behavior
 
-- If there are no commits to merge (target branch is up to date), the action succeeds without creating a PR
-- If there are commits to merge, creates a PR from `upmerge/{base}_{target}` branch
-- The upmerge branch is automatically deleted after merge
+- Compares actual file content between branches (not commit history)
+- If target branch already contains all changes from base, succeeds without creating a PR
+- If changes exist, creates a PR from `upmerge/{base}_{target}` branch
+- Handles existing upmerge branches by recreating them
+- Uses `gh` CLI for PR creation (no external action dependencies)
