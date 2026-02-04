@@ -32,6 +32,7 @@ runs:
             env:
                 GH_TOKEN: ${{ inputs.token }}
             run: |
+                git config --local --unset-all http.https://github.com/.extraheader || true
                 git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
         -   name: Fetch branches
