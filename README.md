@@ -58,8 +58,8 @@ jobs:
 
 ## Behavior
 
-- Compares actual file content between branches (not commit history)
-- If target branch already contains all changes from base, succeeds without creating a PR
-- If changes exist, creates a PR from `upmerge/{base}_{target}` branch
-- Handles existing upmerge branches by recreating them
+- Creates a PR from `upmerge/{base}_{target}` branch to merge changes from base to target
+- If target already contains all changes from base, succeeds without creating a PR
+- If an upmerge branch was manually modified (e.g. conflict resolution), it is preserved — the action skips to avoid overwriting work
+- Unmodified upmerge branches are recreated with the latest base to keep them fresh
 - Uses `gh` CLI for PR creation (no external action dependencies)
