@@ -27,6 +27,13 @@ runs:
     using: "composite"
 
     steps:
+        -   name: Configure git auth
+            shell: bash
+            env:
+                GH_TOKEN: ${{ inputs.token }}
+            run: |
+                git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
         -   name: Fetch branches
             shell: bash
             run: |
